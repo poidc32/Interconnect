@@ -1,0 +1,732 @@
+---
+title: Descripcion del proyecto
+jupyter: python3
+---
+
+
+
+Al operador de telecomunicaciones Interconnect le gustaría poder pronosticar su tasa de cancelación de clientes. Si se descubre que un usuario o usuaria planea irse, se le ofrecerán códigos promocionales y opciones de planes especiales. El equipo de marketing de Interconnect ha recopilado algunos de los datos personales de sus clientes, incluyendo información sobre sus planes y contratos.
+
+## Descripción de los datos
+
+Los datos consisten en archivos obtenidos de diferentes fuentes:
+
+- `contract.csv` — información del contrato;
+- `personal.csv` — datos personales del cliente;
+- `internet.csv` — información sobre los servicios de Internet;
+- `phone.csv` — información sobre los servicios telefónicos
+
+## 1. Anális exploratorio de datos (EDA)
+
+```{python}
+import pandas as pd
+import numpy as np
+import math
+
+import matplotlib.pyplot as plt
+import seaborn as sns
+
+from sklearn.preprocessing import StandardScaler
+from sklearn.model_selection import train_test_split
+
+from sklearn.metrics import (
+    accuracy_score, precision_score, recall_score,
+    f1_score, roc_auc_score, confusion_matrix, ConfusionMatrixDisplay
+)
+
+from sklearn.dummy import DummyClassifier
+from sklearn.linear_model import LogisticRegression
+from sklearn.ensemble import RandomForestClassifier
+
+from xgboost import XGBClassifier
+from lightgbm import LGBMClassifier
+from catboost import CatBoostClassifier
+
+from sklearn.model_selection import RandomizedSearchCV
+```
+
+```{python}
+# Se cargan los archivos a utilizar
+df_cnt = pd.read_csv('contract.csv')
+df_prs = pd.read_csv('personal.csv')
+df_int = pd.read_csv('internet.csv')
+df_phn = pd.read_csv('phone.csv')
+```
+
+```{python}
+# Se visualiza cada archivo con el fin de entender el contenido de los mismos
+df_cnt.info()
+df_cnt
+```
+
+```{python}
+df_prs.info()
+df_prs
+```
+
+```{python}
+df_int.info()
+df_int
+```
+
+```{python}
+df_phn.info()
+df_phn
+```
+
+De momento solo se trabajará con este analisis exploratorio de datos. 
+
+Se observa de momento que todos los datos que tenemos estan completos, sin embargo aun se tiene que hacer el preprocesamiento de los mismos; se debera corregir los titulos ya que no estan de acuerdo a las buenas prácticas, algunas columnas hay que cambiar el tipo de datos, etc.
+
+Posteriormente se evaluaran tambien las columnas necesarias para el analisís y su distribucion
+
+```{python}
+# Unimos todos los DataFrames con base en 'df_cnt'
+df_full = df_cnt.merge(df_prs, on='customerID', how='left')
+df_full = df_full.merge(df_int, on='customerID', how='left')
+df_full = df_full.merge(df_phn, on='customerID', how='left')
+```
+
+```{python}
+# Mostramos las dimensiones del DataFrame resultante
+print(df_full.shape)
+df_full.head()
+```
+
+```{python}
+# Creamos la variable objetivo: 1 si EndDate es distinto de 'No', 0 si sigue activo
+df_full['churn'] = df_full['EndDate'].apply(lambda x: 0 if x == 'No' else 1)
+
+# Verificamos distribución de clases
+df_full['churn'].value_counts()
+```
+
+Se tiene una proporción de aproximadamente 26.5% de churn (1869 / 7043), lo cual es un valor razonable para trabajar en clasificación binaria, aunque hay un leve desbalance que podríamos considerar más adelante
+
+```{python}
+# Renombramos las columnas del DataFrame unificado
+df_full.rename(columns={
+    'customerID': 'customer_id',
+    'BeginDate': 'begin_date',
+    'EndDate': 'end_date',
+    'Type': 'contract_type',
+    'PaperlessBilling': 'paperless_billing',
+    'PaymentMethod': 'payment_method',
+    'MonthlyCharges': 'monthly_charges',
+    'TotalCharges': 'total_charges',
+    'gender': 'gender',
+    'SeniorCitizen': 'senior_citizen',
+    'Partner': 'partner',
+    'Dependents': 'dependents',
+    'InternetService': 'internet_service',
+    'OnlineSecurity': 'online_security',
+    'OnlineBackup': 'online_backup',
+    'DeviceProtection': 'device_protection',
+    'TechSupport': 'tech_support',
+    'StreamingTV': 'streaming_tv',
+    'StreamingMovies': 'streaming_movies',
+    'MultipleLines': 'multiple_lines'
+}, inplace=True)
+
+df_full.columns
+```
+
+```{python}
+df_full.info()
+```
+
+```{python}
+df_full.describe()
+```
+
+Se observa que la columna total_charges no esta en el tipo de datos correctos
+
+```{python}
+# Convertimos total_charges a float
+df_full['total_charges'] = pd.to_numeric(df_full['total_charges'], errors='coerce')
+
+# Revisar si hubo valores no convertibles (ahora serán NaN)
+df_full['total_charges'].isnull().sum()
+```
+
+Ya que solo hay 11 valores nulos despues de la conversion en esta columna, se opta por eliminar las filas que contienen estos valores
+
+```{python}
+df_full = df_full[df_full['total_charges'].notna()]
+df_full.shape
+```
+
+### Distribución de variables numéricas
+
+```{python}
+# Lista de variables numéricas
+num_cols = ['monthly_charges', 'total_charges']
+
+# Histograma + boxplot para cada una
+for col in num_cols:
+    plt.figure(figsize=(10,4))
+
+    # Histograma
+    plt.subplot(1, 2, 1)
+    sns.histplot(df_full[col], kde=True, bins=30)
+    plt.title(f'Distribución de {col}')
+
+    # Boxplot
+    plt.subplot(1, 2, 2)
+    sns.boxplot(x=df_full[col])
+    plt.title(f'Boxplot de {col}')
+
+    plt.tight_layout()
+    plt.show()
+```
+
+### Distribución: monthly_charges 
+- Distribución multimodal, con varios picos.
+
+- Posiblemente está reflejando distintos grupos de clientes (por ejemplo, sin servicios extra, con servicios premium, etc.).
+
+- No hay outliers importantes, se ve bastante “normal”.
+
+### Distribución: total_charges
+- Claramente sesgada a la derecha.
+
+- Tiene varios outliers, pero es esperable: algunos clientes llevan más tiempo y han pagado mucho más.
+
+```{python}
+# Vamos a ver si hay diferencias claras en estas variables entre clientes que se fueron y los que no
+# Comparación de distribución según Churn
+
+for col in num_cols:
+    plt.figure(figsize=(8,4))
+    sns.boxplot(x='churn', y=col, data=df_full)
+    plt.title(f'{col} vs Churn')
+    plt.xlabel('Churn')
+    plt.ylabel(col)
+    plt.show()
+```
+
+### monthly_charges vs churn:
+- Los clientes que cancelaron (churn = 1) tienden a tener cargos mensuales más altos.
+
+- Hay una diferencia clara en las medianas → podría ser una variable predictiva importante.
+
+### total_charges vs churn:
+- Los que se quedaron (churn = 0) tienen cargos totales más altos.
+
+- Tiene sentido: son clientes más antiguos, han pagado más en total.
+
+- También muestra outliers — normal considerando el largo plazo.
+
+### Análisis de variables categóricas vs Churn
+
+```{python}
+cat_cols = [
+    'gender', 'partner', 'dependents', 'contract_type',
+    'paperless_billing', 'payment_method', 'internet_service',
+    'online_security', 'online_backup', 'device_protection',
+    'tech_support', 'streaming_tv', 'streaming_movies',
+    'multiple_lines'
+]
+```
+
+```{python}
+# Cantidad de variables categóricas
+n = len(cat_cols)
+
+# Definimos filas y columnas (por ejemplo 3 columnas por fila)
+cols = 3
+rows = math.ceil(n / cols)
+
+# Creamos la figura y los subplots
+fig, axes = plt.subplots(rows, cols, figsize=(18, rows * 4))
+
+# Para evitar errores si hay menos gráficos que subplots
+axes = axes.flatten()
+
+# Generamos cada gráfico en su lugar correspondiente
+for i, col in enumerate(cat_cols):
+    sns.countplot(data=df_full, x=col, hue='churn', ax=axes[i])
+    axes[i].set_title(f'{col} vs Churn')
+    axes[i].tick_params(axis='x', rotation=45)
+
+# Eliminamos ejes vacíos (si sobran)
+for j in range(i + 1, len(axes)):
+    fig.delaxes(axes[j])
+
+plt.tight_layout()
+plt.show()
+
+```
+
+- contract_type: Los clientes con contrato mes a mes tienen claramente mayor churn. 
+
+- paperless_billing: Los que tienen facturación electrónica también muestran más churn.
+
+- payment_method: El método “Electronic check” tiene bastante churn comparado con otros.
+
+- online_security, online_backup, tech_support, device_protection: Quienes no tienen estos servicios tienden a cancelar más. Posible señal de bajo compromiso o menor satisfacción.
+
+- partner y dependents: Tener pareja o dependientes parece estar relacionado con menor churn.
+
+
+```{python}
+# Configuración del gráfico
+cols = 3
+rows = math.ceil(len(cat_cols) / cols)
+fig, axes = plt.subplots(rows, cols, figsize=(18, rows * 4))
+axes = axes.flatten()
+
+# Graficamos la proporción de churn para cada categoría
+for i, col in enumerate(cat_cols):
+    churn_rate = df_full.groupby(col)['churn'].mean().sort_values(ascending=True)
+    sns.barplot(x=churn_rate.values, y=churn_rate.index, ax=axes[i])
+    axes[i].set_title(f'Tasa de Churn por {col}')
+    axes[i].set_xlabel('Proporción de Churn')
+    axes[i].set_ylabel(col)
+
+# Eliminamos ejes vacíos
+for j in range(i + 1, len(axes)):
+    fig.delaxes(axes[j])
+
+plt.tight_layout()
+plt.show()
+```
+
+- contract_type:
+
+    - Los contratos "month-to-month" tienen la tasa de churn más alta con diferencia.
+
+    - Los contratos de 1 y 2 años retienen mucho mejor.
+
+- paperless_billing y payment_method:
+
+    - Paperless billing = Yes → churn más alto.
+
+    - El método "Electronic check" es el más riesgoso.
+
+    - Métodos automáticos como tarjeta o transferencia retienen mejor.
+
+- partner y dependents:
+
+    - Tener pareja o dependientes reduce churn → quizás porque implica mayor estabilidad/compromiso.
+
+- Servicios de internet y adicionales (online_security, tech_support, etc.):
+
+    - Clientes que no tienen estos servicios cancelan más.
+
+    - Probablemente reflejan menor satisfacción o menos involucramiento.
+
+- streaming_tv y streaming_movies:
+
+    - Relación moderada: quienes no usan estos servicios tienen ligeramente menor churn.
+
+
+###  Conclusión del EDA hasta aquí
+Se tiene una visión sólida del comportamiento de churn según variables:
+
+- Las numéricas muestran buena diferenciación.
+
+- Las categóricas ofrecen pistas claras de perfiles de riesgo.
+
+- Esto será muy útil para feature selection y modelado más adelante.
+
+## 2. Preprocesamiento de datos
+
+```{python}
+# Se eliminarán las columnas innecesarias
+
+df_model = df_full.drop(columns=[
+    'customer_id',    # solo sirve como identificador
+    'begin_date',     # fecha de inicio del contrato
+    'end_date'        # ya fue transformada en churn
+])
+```
+
+```{python}
+# Codificamos todas las variables categóricas automáticamente
+df_model = pd.get_dummies(df_model, drop_first=True)
+```
+
+```{python}
+# Instanciamos el scaler
+scaler = StandardScaler()
+
+# Columnas a escalar
+num_cols = ['monthly_charges', 'total_charges']
+
+# Aplicamos el escalado y reemplazamos en el DataFrame
+df_model[num_cols] = scaler.fit_transform(df_model[num_cols])
+```
+
+## 3. Segmentación de datos en conjuntos de entrenamiento, validación y prueba
+
+```{python}
+# Separar X (features) e y (target)
+X = df_model.drop(columns='churn')
+y = df_model['churn']
+```
+
+```{python}
+# Paso 1: 70% train, 30% temporal
+X_train, X_temp, y_train, y_temp = train_test_split(
+    X, y, test_size=0.30, random_state=42, stratify=y
+)
+
+# Paso 2: 15% val, 15% test desde el 30% restante
+X_val, X_test, y_val, y_test = train_test_split(
+    X_temp, y_temp, test_size=0.5, random_state=42, stratify=y_temp
+)
+
+# Verificamos tamaños
+print(f'Train: {X_train.shape[0]} muestras')
+print(f'Validation: {X_val.shape[0]} muestras')
+print(f'Test: {X_test.shape[0]} muestras')
+```
+
+Se necesitan datos para entrenar, validar y probar nuestros modelos, sin embargo, no se tiene un DF para cada cosa, por lo cual los DF que se tienen tendrán que ser separados en una relacion 70% de los datos para entrenamiento, 15% para la validación y otro 15% para prueba.
+
+## 4. Procedimiento de evaluación
+
+Se crea una función para evaluar los modelos con las metricas:
+- AUC-ROC
+- Accuracy (exactitud)
+- Precision
+- Recall
+- F1-score
+- Matriz de confusión
+
+
+```{python}
+def evaluate_model(model, X_val, y_val, show_cm=True):
+    # Predicción de clases
+    y_pred = model.predict(X_val)
+
+    # Predicción de probabilidades (para ROC AUC)
+    if hasattr(model, "predict_proba"):
+        y_prob = model.predict_proba(X_val)[:,1]
+    else:
+        # Algunos modelos no tienen predict_proba (como SVM sin probabilidad)
+        y_prob = model.decision_function(X_val)
+
+    # Métricas
+    acc = accuracy_score(y_val, y_pred)
+    prec = precision_score(y_val, y_pred)
+    rec = recall_score(y_val, y_pred)
+    f1 = f1_score(y_val, y_pred)
+    auc = roc_auc_score(y_val, y_prob)
+
+    print(f"Accuracy:  {acc:.4f}")
+    print(f"Precision: {prec:.4f}")
+    print(f"Recall:    {rec:.4f}")
+    print(f"F1 Score:  {f1:.4f}")
+    print(f"AUC-ROC:   {auc:.4f}")
+
+    if show_cm:
+        cm = confusion_matrix(y_val, y_pred)
+        disp = ConfusionMatrixDisplay(confusion_matrix=cm)
+        disp.plot(cmap="Blues")
+        plt.title("Matriz de Confusión")
+        plt.show()
+```
+
+## 5. Entrenamiento de modelo
+
+Se entrenaran diferentes modelos con diferentes hiperparámetros para poder evaluarlos y elegir el mejor
+
+### Modelo dummy
+
+```{python}
+# Creamos el modelo dummy que siempre predice la clase más frecuente (estrategia = "most_frequent")
+dummy = DummyClassifier(strategy="most_frequent", random_state=42)
+
+# Entrenamos
+dummy.fit(X_train, y_train)
+
+# Evaluamos en el set de validación
+print("Evaluación del modelo Dummy:")
+evaluate_model(dummy, X_val, y_val)
+```
+
+- Accuracy alto (~73%), pero es engañosa: solo predice que todos los clientes se quedan (churn = 0).
+
+- Precisión, Recall y F1 = 0 porque nunca predice la clase minoritaria (churn = 1).
+
+- AUC = 0.5 → equivale a tirar una moneda 🪙 (modelo sin capacidad de clasificación real).
+
+Este es nuestro punto de partida. Cualquier modelo útil debería mejorar esto.
+
+### Regresión logistica
+
+```{python}
+# Creamos y entrenamos el modelo
+logreg = LogisticRegression(max_iter=1000, random_state=42)
+logreg.fit(X_train, y_train)
+
+# Evaluamos en el set de validación
+print("Evaluación del modelo de Regresión Logística:")
+evaluate_model(logreg, X_val, y_val)
+```
+
+- AUC-ROC de 0.84 → muy buen resultado. El modelo es capaz de distinguir correctamente entre churn y no churn.
+
+- Recall = 56.6% → detecta más de la mitad de los que abandonan, ¡no está mal para empezar!
+
+- Precision de 68% → bastante decente también.
+
+- F1 Score equilibrado, buena señal de balance entre errores tipo I y II.
+
+### Random Foerest
+
+```{python}
+# Creamos y entrenamos el modelo
+rf = RandomForestClassifier(
+    n_estimators=200,
+    max_depth=10,
+    class_weight='balanced',
+    random_state=42
+)
+rf.fit(X_train, y_train)
+
+# Evaluamos en el set de validación
+print("Evaluación del modelo Random Forest:")
+evaluate_model(rf, X_val, y_val)
+```
+
+Ya que se tiene un gran desempeño inicial con este modelo, se opta por no probar otros hiperparámetros. Por lo cual se procede a entrenar el siguiente modelo.
+
+### XGBoost
+
+```{python}
+# Definimos el espacio de búsqueda
+param_dist = {
+    'n_estimators': [100, 200, 300],
+    'max_depth': [3, 5, 7, 10],
+    'learning_rate': [0.01, 0.05, 0.1, 0.2],
+    'min_child_weight': [1, 3, 5],
+    'subsample': [0.6, 0.8, 1.0],
+    'colsample_bytree': [0.6, 0.8, 1.0],
+    'scale_pos_weight': [1, 2, 3],  
+}
+
+```
+
+```{python}
+# Instanciamos el modelo base
+xgb_base = XGBClassifier(
+    use_label_encoder=False,
+    eval_metric='logloss',
+    random_state=42
+)
+
+# Randomized search
+xgb_search = RandomizedSearchCV(
+    estimator=xgb_base,
+    param_distributions=param_dist,
+    n_iter=30,  # Número de combinaciones a probar
+    scoring='roc_auc',  # Usamos AUC como criterio principal
+    cv=3,  # Validación cruzada
+    verbose=1,
+    random_state=42,
+    n_jobs=-1
+)
+
+# Ejecutamos la búsqueda
+xgb_search.fit(X_train, y_train)
+
+# Mejor modelo
+best_xgb = xgb_search.best_estimator_
+
+# Evaluación en validación
+print("Evaluación del mejor modelo XGBoost (tuned):")
+evaluate_model(best_xgb, X_val, y_val)
+```
+
+- Alta recall (82.6%): el modelo detecta a la gran mayoría de los que van a cancelar, lo que es muy valioso para la empresa. Puede ofrecerles promociones, contacto preventivo, etc.
+
+- Precision baja (49.9%): de cada 100 clientes que el modelo alerta como posibles canceladores, 51 no lo harán (falsos positivos). Esto podría generar esfuerzo extra en retención innecesaria, pero muchas veces es un trade-off aceptable.
+
+- F1 score equilibrado: indica que no estás sacrificando demasiado recall o precision por separado.
+
+- AUC > 0.85: indica que el modelo distingue bien entre churn y no churn.
+
+
+### LigthGBM
+
+```{python}
+# Espacio de búsqueda de hiperparámetros
+param_dist_lgbm = {
+    'n_estimators': [100, 200, 300],
+    'max_depth': [3, 5, 7, 10],
+    'learning_rate': [0.01, 0.05, 0.1, 0.2],
+    'min_child_samples': [10, 20, 30],
+    'subsample': [0.6, 0.8, 1.0],
+    'colsample_bytree': [0.6, 0.8, 1.0],
+    'class_weight': ['balanced', None]
+}
+```
+
+```{python}
+
+# Modelo base
+lgbm_base = LGBMClassifier(random_state=42)
+
+# Búsqueda aleatoria
+lgbm_search = RandomizedSearchCV(
+    estimator=lgbm_base,
+    param_distributions=param_dist_lgbm,
+    n_iter=30,
+    scoring='roc_auc',
+    cv=3,
+    verbose=1,
+    random_state=42,
+    n_jobs=-1
+)
+
+# Entrenamiento
+lgbm_search.fit(X_train, y_train)
+
+# Evaluación del mejor modelo
+best_lgbm = lgbm_search.best_estimator_
+print("Evaluación del mejor modelo LightGBM (tuned):")
+evaluate_model(best_lgbm, X_val, y_val)
+
+```
+
+### CatBoost
+
+```{python}
+# Definimos espacio de búsqueda
+param_dist_cat = {
+    'iterations': [200, 300, 500],
+    'depth': [4, 6, 8, 10],
+    'learning_rate': [0.01, 0.05, 0.1],
+    'l2_leaf_reg': [1, 3, 5, 7, 9],
+    'border_count': [32, 64, 128],  # puntos de partición
+    'scale_pos_weight': [1, 2, 3]   # útil por el desbalance
+}
+
+```
+
+```{python}
+# Modelo base
+cat_base = CatBoostClassifier(
+    verbose=0,
+    random_state=42
+)
+
+# Búsqueda aleatoria
+cat_search = RandomizedSearchCV(
+    estimator=cat_base,
+    param_distributions=param_dist_cat,
+    n_iter=30,
+    scoring='roc_auc',
+    cv=3,
+    random_state=42,
+    verbose=1,
+    n_jobs=-1
+)
+
+# Entrenamos
+cat_search.fit(X_train, y_train)
+
+# Evaluación final
+best_cat = cat_search.best_estimator_
+print("Evaluación del mejor modelo CatBoost (tuned):")
+evaluate_model(best_cat, X_val, y_val)
+
+```
+
+- Alta precisión: si el modelo dice que un cliente va a cancelar, es muy probable que lo haga.
+
+- AUC-ROC > 0.85: garantiza buen poder de clasificación en general.
+
+- Accuracy alto: el modelo hace buenas predicciones en general.
+
+- Recall bajo: el modelo no logra detectar a todos los que se van. Se le escapan 153 churns, según la matriz de confusión.
+
+- Podría generar una estrategia de retención más conservadora: es decir, el equipo solo actuaría sobre casos “muy seguros”, pero dejaría ir muchos que podrían haberse prevenido.
+
+## 6. Análisis y evaluación de los modelos
+
+Se compara el rendimiento de los dos mejores modelos (XGBoost y CatBoost) sobre el conjunto de prueba.
+
+```{python}
+print("📊 Evaluación final del modelo XGBoost (Test Set):")
+evaluate_model(best_xgb, X_test, y_test)
+
+print("\n📊 Evaluación final del modelo CatBoost (Test Set):")
+evaluate_model(best_cat, X_test, y_test)
+```
+
+- XGBoost sigue siendo el mejor para recall y F1 — detecta más churns, aunque a veces se equivoca.
+
+- CatBoost es más conservador y preciso, pero deja ir a muchos que sí cancelan.
+
+## 7. Conclusión final
+
+Después de evaluar diversos algoritmos de clasificación (Logistic Regression, Random Forest, XGBoost, LightGBM y CatBoost), el modelo final seleccionado fue CatBoost con hiperparámetros optimizados mediante RandomizedSearchCV, debido a su desempeño equilibrado y estabilidad en datos no vistos.
+
+- El modelo clasifica correctamente el 78.6% de los casos.
+
+- Con una AUC-ROC de 0.828, CatBoost demuestra ser capaz de distinguir eficazmente entre clientes que cancelan y los que no.
+
+- La alta precisión (64.7%) indica que cuando predice que alguien se va, suele acertar.
+
+- Aunque el recall es moderado (42.5%), este trade-off es razonable dadas las prioridades del negocio.
+
+Este modelo puede integrarse en el sistema de CRM de la empresa para:
+
+- Identificar posibles bajas con alta precisión.
+
+- Ofrecer promociones, encuestas o intervenciones específicas solo a clientes con alta probabilidad de cancelación.
+
+- Optimizar recursos del equipo de retención, enfocándose en casos con mayor riesgo.
+
+
+
+## 8. Informe de solución
+
+### ¿Qué pasos del plan se realizaron y qué pasos se omitieron (explica por qué)?
+
+De manera general, se respetaron todos los pasos propuestos desde el inicio del proyecto. La única excepción fue el análisis exploratorio de datos (EDA), el cual se desarrolló con mayor profundidad. Inicialmente, se realizó una revisión general de las tablas por separado; sin embargo, posteriormente se compararon al menos dos variables con la variable objetivo (churn) para obtener una mejor comprensión del impacto de distintas características en la cancelación del servicio.
+
+
+### ¿Qué dificultades encontraste y cómo lograste resolverlas?
+
+Uno de los retos principales que encontré en este proyecto, y en la mayoría, fue la correcta comprensión de la información. Varias partes de los datos pueden prestarse a distintas interpretaciones, o incluso pueden llegar a confundirse fácilmente si no se analizan con cuidado.
+
+Por otro lado, siempre representa un reto el manejo adecuado de la información: cómo tratarla y tener la certeza de que los datos se están utilizando correctamente en cada paso del proceso.
+
+En estos dos aspectos fue clave mantener una comunicación efectiva con el líder del equipo para aclarar dudas, además de complementar con búsqueda de información en distintas fuentes.
+
+Finalmente, otro punto que también representa un reto constante es el uso correcto de las librerías. Algunas de ellas requieren estructuras o formatos de datos específicos, y es fácil confundirse con los argumentos de ciertas funciones. En estos casos, bastó con revisar la documentación oficial de las funciones para lograr una buena interpretación y comprensión de su funcionamiento.
+
+### ¿Cuáles fueron algunos de los pasos clave para resolver la tarea?
+
+**Comprensión del problema**: Antes de trabajar con los datos, fue importante entender claramente qué era lo que se quería predecir (churn) y cómo se iba a evaluar el modelo (AUC-ROC y accuracy como métricas principales).
+
+**Exploración y análisis de datos (EDA)**: Se realizó un análisis inicial de cada tabla por separado y luego se integraron para formar un solo dataset. Se examinaron distribuciones, valores faltantes y posibles relaciones entre variables.
+
+**Preparación del dataset**: Incluyó renombrar columnas, unificar los dataframes, crear la variable objetivo (churn), codificar variables categóricas, escalar variables numéricas y dividir los datos en conjuntos de entrenamiento, validación y prueba.
+
+**Entrenamiento de modelos**: Se probaron distintos modelos, comenzando por un DummyClassifier como referencia, luego regresión logística y varios modelos de potenciación de gradiente como Random Forest, XGBoost, LightGBM y CatBoost.
+
+**Optimización de hiperparámetros**: Se utilizó RandomizedSearchCV para afinar los modelos más prometedores (como XGBoost, LightGBM y CatBoost) y mejorar su rendimiento.
+
+**Evaluación final**: Se compararon los modelos en el set de prueba, y se seleccionó el que mejor cumplía con los criterios del proyecto, priorizando el AUC-ROC y la precisión general.
+
+**Reflexión y cierre**: Finalmente, se analizó el desempeño del modelo, los retos encontrados en el proceso, y cómo podrían aplicarse los resultados en un contexto real.
+
+### ¿Cuál es tu modelo final y qué nivel de calidad tiene?
+
+El modelo final seleccionado fue CatBoostClassifier con hiperparámetros ajustados mediante RandomizedSearchCV. Esta elección se basó en su buen desempeño en las dos métricas principales del proyecto: AUC-ROC y accuracy.
+
+Durante la evaluación en el conjunto de prueba, el modelo obtuvo los siguientes resultados:
+
+Accuracy 0.7858, AUC-ROC	0.8280, Precision	0.6467, Recall	0.4250, F1 Score	0.5129
+
+Estos valores indican que el modelo tiene un buen poder predictivo general, siendo capaz de distinguir correctamente entre clientes que cancelan el servicio y los que no, con una precisión considerable en sus predicciones positivas. Aunque el recall fue más moderado, esto representa una estrategia conservadora enfocada en minimizar los falsos positivos, lo cual puede ser útil si se busca aplicar acciones de retención únicamente a los casos más seguros.
+
+En resumen, el modelo final cumple con los objetivos establecidos del proyecto, entregando un rendimiento sólido y equilibrado en un contexto realista.
+
+
