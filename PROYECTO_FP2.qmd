@@ -47,10 +47,10 @@ from sklearn.model_selection import RandomizedSearchCV
 
 ```{python}
 # Se cargan los archivos a utilizar
-df_cnt = pd.read_csv('contract.csv')
-df_prs = pd.read_csv('personal.csv')
-df_int = pd.read_csv('internet.csv')
-df_phn = pd.read_csv('phone.csv')
+df_cnt = pd.read_csv('datasets/contract.csv')
+df_prs = pd.read_csv('datasets/personal.csv')
+df_int = pd.read_csv('datasets/internet.csv')
+df_phn = pd.read_csv('datasets/phone.csv')
 ```
 
 ```{python}
