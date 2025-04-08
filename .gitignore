@@ -2,3 +2,4 @@
 *.csv
 *catboost_info
 *.py
+*.venv
