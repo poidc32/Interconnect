@@ -1,5 +1,5 @@
 *.ipynb
-*.csv
+*datasets
 *catboost_info
 *generar_requierments.py
 *.venv
