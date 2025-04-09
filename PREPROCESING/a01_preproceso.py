@@ -25,6 +25,8 @@ from catboost import CatBoostClassifier
 
 from sklearn.model_selection import RandomizedSearchCV
 
+from functions.evaluate_model import evaluate_model
+
 # %% Importacion
 
 df_cnt = pd.read_csv('datasets/contract.csv')
@@ -106,35 +108,6 @@ X_val, X_test, y_val, y_test = train_test_split(
     X_temp, y_temp, test_size=0.5, random_state=42, stratify=y_temp
 )
 
-# %% procedimiento de evaluación
-
-def evaluate_model(model, X_val, y_val, show_cm=True):
-    
-    y_pred = model.predict(X_val)
-
-    if hasattr(model, "predict_proba"):
-        y_prob = model.predict_proba(X_val)[:,1]
-    else:
-        y_prob = model.decision_function(X_val)
-
-    acc = accuracy_score(y_val, y_pred)
-    prec = precision_score(y_val, y_pred)
-    rec = recall_score(y_val, y_pred)
-    f1 = f1_score(y_val, y_pred)
-    auc = roc_auc_score(y_val, y_prob)
-
-    print(f"Accuracy:  {acc:.4f}")
-    print(f"Precision: {prec:.4f}")
-    print(f"Recall:    {rec:.4f}")
-    print(f"F1 Score:  {f1:.4f}")
-    print(f"AUC-ROC:   {auc:.4f}")
-
-    if show_cm:
-        cm = confusion_matrix(y_val, y_pred)
-        disp = ConfusionMatrixDisplay(confusion_matrix=cm)
-        disp.plot(cmap="Blues")
-        plt.title("Matriz de Confusión")
-        plt.show()
 
 # %% MODELO DUMMY
 
