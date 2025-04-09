@@ -4,3 +4,4 @@
 *generar_requierments.py
 *.venv
 *.pyc
+# TODO Agregar más extensiones de binarios (jpg, png, pdf, etc.)
