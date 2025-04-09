@@ -1,3 +1,9 @@
+import matplotlib.pyplot as plt
+from sklearn.metrics import (
+    accuracy_score, precision_score, recall_score,
+    f1_score, roc_auc_score, confusion_matrix, ConfusionMatrixDisplay
+)
+
 # %% procedimiento de evaluación
 
 def evaluate_model(model, X_val, y_val, show_cm=True):
@@ -27,3 +33,13 @@ def evaluate_model(model, X_val, y_val, show_cm=True):
         disp.plot(cmap="Blues")
         plt.title("Matriz de Confusión")
         plt.show()
+
+
+print(f"El nombre de esta sección es: {__name__}")
+
+if __name__ == "__main__":
+    # Este bloque se ejecutará solo si el script se ejecuta directamente
+    print("Este script no está diseñado para ejecutarse directamente.")
+    print("Por favor, importa la función evaluate_model desde otro script.")
+
+
