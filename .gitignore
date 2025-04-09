@@ -3,3 +3,4 @@
 *catboost_info
 *generar_requierments.py
 *.venv
+*.pyc
