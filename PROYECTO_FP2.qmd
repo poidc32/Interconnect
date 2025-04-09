@@ -395,6 +395,7 @@ Se crea una función para evaluar los modelos con las metricas:
 - F1-score
 - Matriz de confusión
 
+<!-- TODO Importar evaluate_model de functions -->
 
 ```{python}
 def evaluate_model(model, X_val, y_val, show_cm=True):
